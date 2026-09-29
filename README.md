@@ -107,6 +107,10 @@ Sizes are allocated disk blocks (what `du` reports), not apparent file sizes.
 | [sweep](https://github.com/KitsuneKode/sweep), ZapDir | npkill-style TUIs covering `.next`, `dist`, `.turbo`. |
 | `git clean -Xdn` / `-Xdf` | Per repo: removes everything gitignored. Careful, that includes `.env` files. |
 
+## Feedback
+
+If it's useful, a star on the repo helps and feel free to pass it on to other devs. Bugs, ideas, PRs, or if you want to work on it together: [open an issue](https://github.com/Avilash2001/buildkill/issues) or ping me.
+
 ## Development
 
 ```bash
