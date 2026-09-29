@@ -19,7 +19,8 @@ ${c.bold('USAGE')}
 ${c.bold('OPTIONS')}
   -t, --target <a,b,c>   folder names to look for (replaces the default list)
   -a, --add <a,b,c>      extra folder names on top of the defaults (e.g. node_modules)
-      --all              also include dependency folders (node_modules, Pods, .venv)
+  -N, --node-modules     also look for node_modules folders (npkill-style)
+      --all              also include Pods and .venv on top of node_modules
   -x, --exclude <a,b>    folder names or path fragments to skip
   -d, --depth <n>        how deep to descend (default: unlimited)
       --min-size <size>  only show folders at least this big     e.g. 100mb, 2gb
@@ -43,7 +44,8 @@ ${c.bold('EXAMPLES')}
   buildkill ~/Desktop/Fleapo                 browse every project under a folder
   buildkill -l --min-size 200mb              quick report of the big offenders
   buildkill -t .next,.turbo -y --older-than 30d   unattended cleanup of stale caches
-  buildkill --all                            include node_modules too (npkill-style)
+  buildkill -N                               include node_modules too (npkill-style)
+  buildkill ~ -N --older-than 30d            everything stale, including old node_modules
 `.trimStart();
 
 function fail(msg) {
@@ -62,6 +64,7 @@ export async function main(argv) {
         target: { type: 'string', short: 't' },
         add: { type: 'string', short: 'a' },
         all: { type: 'boolean' },
+        'node-modules': { type: 'boolean', short: 'N' },
         exclude: { type: 'string', short: 'x' },
         depth: { type: 'string', short: 'd' },
         'min-size': { type: 'string' },
@@ -110,7 +113,12 @@ export async function main(argv) {
     return fail(`invalid sort "${values.sort}" (size | age | path)`);
   }
 
-  const targets = resolveTargets({ target: values.target, add: values.add, all: values.all });
+  const targets = resolveTargets({
+    target: values.target,
+    add: values.add,
+    all: values.all,
+    nodeModules: values['node-modules'],
+  });
   const exclude = values.exclude ? values.exclude.split(',').map((s) => s.trim()).filter(Boolean) : [];
   const scanner = new Scanner({ root, targets, exclude, maxDepth, filter });
   const dryRun = !!values['dry-run'];

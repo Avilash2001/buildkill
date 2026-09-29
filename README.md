@@ -39,7 +39,8 @@ buildkill [dir] [options]            interactive (default: current directory)
 
   -t, --target <a,b,c>   folder names to look for (replaces the default list)
   -a, --add <a,b,c>      extra folder names on top of the defaults (e.g. node_modules)
-      --all              also include dependency folders (node_modules, Pods, .venv)
+  -N, --node-modules     also look for node_modules folders (npkill-style)
+      --all              also include Pods and .venv on top of node_modules
   -x, --exclude <a,b>    folder names or path fragments to skip
   -d, --depth <n>        how deep to descend (default: unlimited)
       --min-size <size>  only show folders at least this big       e.g. 100mb, 2gb
@@ -72,7 +73,8 @@ Examples:
 buildkill ~/Desktop/Fleapo                       # browse every project under a folder
 buildkill -l --min-size 200mb                    # quick report of the big offenders
 buildkill -t .next,.turbo -y --older-than 30d    # unattended cleanup of stale caches
-buildkill --all                                  # include node_modules too (npkill-style)
+buildkill -N                                     # include node_modules too (npkill-style)
+buildkill ~ -N --older-than 30d                  # everything stale, including old node_modules
 buildkill -n -y                                  # dry run: show what -y would delete
 ```
 
@@ -86,8 +88,9 @@ Run `buildkill --targets` for the full list. In short:
 - **Only inside a project folder** (one with `package.json`, `build.gradle`, `Cargo.toml`,
   `pyproject.toml`, `Podfile`, …): generic names like `dist`, `build`, `out`, `coverage`,
   `.cache`, `target`, `storybook-static`. A `build` folder in `~/Documents` is never touched.
-- **Opt-in** (`--all`): `node_modules`, `Pods`, `.venv`. These are regenerable but slow to
-  restore, so they stay out of the default list.
+- **Opt-in**: `node_modules` with `-N` (or `--all`, which also adds `Pods` and `.venv`). These are
+  regenerable but slow to restore, so they stay out of the default list. With `-N`, buildkill
+  fully replaces npkill.
 - **Inside `node_modules`** only `.cache` and `.vite` are reported. It never recurses into
   `node_modules`, `vendor`, `venv`, `.git`, hidden folders, symlinks, or `~/Library`.
 - Empty folders are hidden. Deletion refuses `/`, your home folder and the scan root.

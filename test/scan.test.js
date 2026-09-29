@@ -111,6 +111,11 @@ test('--all adds dependency folders, -t replaces the list', async () => {
     assert.ok(rels(all).includes('web/node_modules'));
     assert.ok(!rels(all).includes('web/node_modules/.cache'), 'no cache when node_modules itself is a target');
 
+    const nm = await scan({ root, targets: resolveTargets({ nodeModules: true }) });
+    assert.ok(rels(nm).includes('web/node_modules'), '-N adds node_modules');
+    assert.ok(rels(nm).includes('web/.next'), '-N keeps the defaults');
+    assert.ok(!rels(nm).includes('py/.venv'), '-N does not add other deps');
+
     const only = await scan({ root, targets: resolveTargets({ target: '.next' }) });
     assert.deepEqual(rels(only), ['web/.next']);
 
@@ -189,6 +194,11 @@ test('CLI: --json, --list, --yes --dry-run, --yes', async () => {
     assert.match(list, /web\/dist/);
     assert.doesNotMatch(list, /\.next/);
     assert.match(list, /2 folders/);
+
+    const { stdout: nmList } = await run(process.execPath, [BIN, root, '-l', '-N', '-t', '.next']);
+    assert.match(nmList, /web\/node_modules/);
+    assert.match(nmList, /web\/\.next/);
+    assert.doesNotMatch(nmList, /node_modules\/\.cache/, 'caches inside node_modules fold into it');
 
     const { stdout: dry } = await run(process.execPath, [BIN, root, '-y', '-n', '-t', '.turbo']);
     assert.match(dry, /dry-run/);

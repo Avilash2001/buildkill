@@ -67,7 +67,7 @@ export function defaultTargets({ all = false } = {}) {
  * Resolve the CLI's -t / -a / --all flags into a concrete target list.
  * Names that are not in TARGETS become custom, always-matched targets.
  */
-export function resolveTargets({ target, add, all } = {}) {
+export function resolveTargets({ target, add, all, nodeModules } = {}) {
   const byName = new Map(TARGETS.map((t) => [t.name, t]));
   const split = (s) => (s ? s.split(',').map((x) => x.trim()).filter(Boolean) : []);
   const custom = (name) => byName.get(name) ?? { name, group: 'custom', desc: 'custom target' };
@@ -76,6 +76,7 @@ export function resolveTargets({ target, add, all } = {}) {
   for (const name of split(add)) {
     if (!list.some((t) => t.name === name)) list.push(custom(name));
   }
+  if (nodeModules && !list.some((t) => t.name === 'node_modules')) list.push(byName.get('node_modules'));
   return list;
 }
 
@@ -84,7 +85,7 @@ export function describeTargets() {
   const lines = [];
   for (const group of ['cache', 'build', 'deps']) {
     lines.push('');
-    lines.push(group === 'deps' ? 'deps  (opt-in: --all, or -a node_modules)' : group);
+    lines.push(group === 'deps' ? 'deps  (opt-in: -N / --node-modules, --all, or -a <name>)' : group);
     for (const t of TARGETS.filter((t) => t.group === group)) {
       const scope = t.project ? 'project dirs only' : 'anywhere         ';
       lines.push(`  ${t.name.padEnd(w)}  ${scope}  ${t.desc}`);
