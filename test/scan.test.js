@@ -215,6 +215,71 @@ test('CLI: --json, --list, --yes --dry-run, --yes', async () => {
   }
 });
 
+test('Claude Code worktrees: caches inside found by default; -W lists whole worktrees, flags dirty ones, prunes on delete', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'buildkill-wt-'));
+  try {
+    const repo = path.join(root, 'repo');
+    await mk(root, { 'repo/package.json': '{}', 'repo/.gitignore': '.next\nnode_modules\n', 'repo/index.js': '1' });
+    const git = (...args) => run('git', ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args]);
+    await git('init', '-q');
+    await git('add', '.');
+    await git('commit', '-q', '-m', 'init');
+    await fs.mkdir(path.join(repo, '.claude/worktrees'), { recursive: true });
+    await git('worktree', 'add', '-q', path.join(repo, '.claude/worktrees/clean'), '-b', 'clean');
+    await git('worktree', 'add', '-q', path.join(repo, '.claude/worktrees/dirty'), '-b', 'dirty');
+    await mk(root, {
+      'repo/.claude/worktrees/clean/.next/x.bin': 'x'.repeat(5000), // gitignored → still clean
+      'repo/.claude/worktrees/dirty/wip.js': 'work in progress', // untracked → dirty
+      'repo/.claude/worktrees/orphan/.next/y.bin': 'y'.repeat(3000), // dir git knows nothing about
+    });
+
+    // default: descend into worktrees, report the caches inside, never the worktree itself
+    const def = await scan({ root, targets: resolveTargets() });
+    const defRels = rels(def);
+    assert.ok(defRels.includes('repo/.claude/worktrees/clean/.next'));
+    assert.ok(defRels.includes('repo/.claude/worktrees/orphan/.next'));
+    assert.ok(!def.some((i) => i.name === 'worktree'));
+
+    // -W: whole worktrees, with notes
+    const s = new Scanner({ root, targets: resolveTargets({ worktrees: true }) });
+    await s.run();
+    const wt = s.visibleItems();
+    assert.deepEqual(rels(wt.filter((i) => i.name === 'worktree')), [
+      'repo/.claude/worktrees/clean',
+      'repo/.claude/worktrees/dirty',
+      'repo/.claude/worktrees/orphan',
+    ]);
+    assert.ok(!wt.some((i) => i.rel.includes('worktrees/') && i.name !== 'worktree'), 'nothing listed inside a whole worktree');
+    const byRel = Object.fromEntries(wt.map((i) => [i.rel, i]));
+    assert.equal(byRel['repo/.claude/worktrees/clean'].note, undefined);
+    assert.equal(byRel['repo/.claude/worktrees/dirty'].note, 'uncommitted changes');
+    assert.equal(byRel['repo/.claude/worktrees/orphan'].note, 'not a git worktree');
+    assert.ok(byRel['repo/.claude/worktrees/clean'].size > 5000);
+
+    // delete the clean one: folder gone, git bookkeeping pruned, sibling untouched
+    await deleteItem(byRel['repo/.claude/worktrees/clean'], { root });
+    await assert.rejects(fs.access(path.join(repo, '.claude/worktrees/clean')));
+    const { stdout: list } = await git('worktree', 'list');
+    assert.doesNotMatch(list, /worktrees\/clean/);
+    assert.match(list, /worktrees\/dirty/);
+    await fs.access(path.join(repo, '.claude/worktrees/dirty/wip.js'));
+
+    // guard: a 'worktree' item outside .claude/worktrees is refused
+    await assert.rejects(
+      deleteItem({ path: path.join(root, 'repo'), name: 'worktree', target: { name: 'worktree' } }, { root }),
+      /not under \.claude\/worktrees/,
+    );
+
+    // CLI surfaces the note
+    const { stdout } = await run(process.execPath, [BIN, root, '-l', '-W', '-t', 'worktree']);
+    assert.match(stdout, /worktrees\/dirty.*uncommitted changes/);
+    const { stdout: json } = await run(process.execPath, [BIN, root, '--json', '-W', '-t', 'worktree']);
+    assert.equal(JSON.parse(json).items.find((i) => i.path.endsWith('/dirty')).note, 'uncommitted changes');
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('CLI: bad arguments exit 1', async () => {
   await assert.rejects(run(process.execPath, [BIN, '--min-size', 'lots']), /invalid size/);
   await assert.rejects(run(process.execPath, [BIN, '--depth', '0']), /invalid depth/);

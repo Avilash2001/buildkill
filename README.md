@@ -40,6 +40,8 @@ buildkill [dir] [options]            interactive (default: current directory)
   -t, --target <a,b,c>   folder names to look for (replaces the default list)
   -a, --add <a,b,c>      extra folder names on top of the defaults (e.g. node_modules)
   -N, --node-modules     also look for node_modules folders (npkill-style)
+  -W, --worktrees        list whole Claude Code worktrees (.claude/worktrees/*), flagging
+                         any with uncommitted changes; runs git worktree prune after deleting
       --all              also include Pods and .venv on top of node_modules
   -x, --exclude <a,b>    folder names or path fragments to skip
   -d, --depth <n>        how deep to descend (default: unlimited)
@@ -75,6 +77,7 @@ buildkill -l --min-size 200mb                    # quick report of the big offen
 buildkill -t .next,.turbo -y --older-than 30d    # unattended cleanup of stale caches
 buildkill -N                                     # include node_modules too (npkill-style)
 buildkill ~ -N --older-than 30d                  # everything stale, including old node_modules
+buildkill ~/Desktop -W                           # leftover Claude Code session worktrees
 buildkill -n -y                                  # dry run: show what -y would delete
 ```
 
@@ -91,6 +94,10 @@ Run `buildkill --targets` for the full list. In short:
 - **Opt-in**: `node_modules` with `-N` (or `--all`, which also adds `Pods` and `.venv`). These are
   regenerable but slow to restore, so they stay out of the default list. With `-N`, buildkill
   fully replaces npkill.
+- **Claude Code worktrees** (`<repo>/.claude/worktrees/<session>`) are scanned like any other
+  project, so the `node_modules` and `.next` a session left behind show up. With `-W` each
+  worktree is listed whole instead; ones with uncommitted changes are flagged in red, and
+  deleting one also runs `git worktree prune` in the parent repo.
 - **Inside `node_modules`** only `.cache` and `.vite` are reported. It never recurses into
   `node_modules`, `vendor`, `venv`, `.git`, hidden folders, symlinks, or `~/Library`.
 - Empty folders are hidden. Deletion refuses `/`, your home folder and the scan root.

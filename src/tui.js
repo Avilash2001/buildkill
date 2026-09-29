@@ -166,23 +166,27 @@ export function runTui({ scanner, root, sort = 'size', full = false, dryRun = fa
         }
         const isCur = i === st.cursor;
         const sel = st.selected.has(it);
-        const pathStr = truncate(full ? tildify(it.path, home) : it.rel, pathW);
+        const note = it.note ? `  ${it.note}` : '';
+        const pathStr = truncate(full ? tildify(it.path, home) : it.rel, Math.max(8, pathW - note.length));
         lines.push(
           (isCur ? c.cyan(' ❯') : '  ') + ' ' +
             (sel ? c.yellow('[x]') : c.dim('[ ]')) + ' ' +
             sizeColor(it) + ' ' +
             c.dim(pad(fmtAge(it.mtime), 4, true)) + '  ' +
             c.magenta(pad(truncate(it.name, targetW), targetW)) + '  ' +
-            (isCur ? c.bold(pathStr) : pathStr),
+            (isCur ? c.bold(pathStr) : pathStr) +
+            (note ? (it.note === 'uncommitted changes' ? c.red(note) : c.yellow(note)) : ''),
         );
       }
 
       if (st.confirm) {
         const n = st.confirm.length;
         const sz = st.confirm.reduce((a, i) => a + (i.size ?? 0), 0);
+        const dirty = st.confirm.filter((i) => i.note === 'uncommitted changes').length;
         lines.push(
           c.yellow(` ${dryRun ? 'Pretend-delete' : 'Delete'} ${n} folder${n === 1 ? '' : 's'} (${fmtSize(sz)})? `) +
-            c.bold('y') + c.dim('/N'),
+            c.bold('y') + c.dim('/N') +
+            (dirty ? c.red(`   ⚠ ${dirty} worktree${dirty === 1 ? '' : 's'} with uncommitted changes`) : ''),
         );
       } else {
         lines.push(

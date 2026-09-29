@@ -2,7 +2,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { EventEmitter } from 'node:events';
-import { NODE_MODULES_CACHES, PROJECT_MARKERS, PROJECT_MARKER_EXTS } from './targets.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import {
+  CLAUDE_DIR, CLAUDE_WORKTREES_DIR, NODE_MODULES_CACHES, PROJECT_MARKERS, PROJECT_MARKER_EXTS,
+} from './targets.js';
+
+const execFileP = promisify(execFile);
+const git = (args, cwd) => execFileP('git', args, { cwd, timeout: 20_000, maxBuffer: 4 << 20 });
 
 const HOME = os.homedir();
 
@@ -52,7 +59,7 @@ function looksLikeProject(entries) {
  *   'progress' ()      – another directory was read
  *   'done'     ()      – walk + all size computations finished
  *
- * item = { path, rel, name, target, size, files, mtime, state, error? }
+ * item = { path, rel, name, target, size, files, mtime, state, note?, error? }
  * state: 'sizing' | 'ready' | 'deleting' | 'deleted' | 'error'
  */
 export class Scanner extends EventEmitter {
@@ -119,6 +126,10 @@ export class Scanner extends EventEmitter {
         continue;
       }
       if (NEVER_ENTER.has(name)) continue;
+      if (name === CLAUDE_DIR) {
+        side.push(this.walkClaudeWorktrees(full, depth + 1));
+        continue;
+      }
       if (name.startsWith('.')) continue; // hidden dirs never contain projects worth scanning
       if (atHome && HOME_SKIP.has(name)) continue;
       if (atRoot && ROOT_SKIP.has(name)) continue;
@@ -126,6 +137,53 @@ export class Scanner extends EventEmitter {
     }
 
     await Promise.all([...side, ...subdirs.map((d) => this.walk(d, depth + 1))]);
+  }
+
+  /**
+   * Claude Code creates a git worktree per session at <repo>/.claude/worktrees/<name>.
+   * Each is a full checkout, often with its own node_modules and build output.
+   * Without -W we scan inside them like any project; with -W each worktree is
+   * offered as a whole (flagged when it has uncommitted changes).
+   */
+  async walkClaudeWorktrees(claudeDir, claudeDepth) {
+    const wtRoot = path.join(claudeDir, CLAUDE_WORKTREES_DIR);
+    const entries = await this.readdir(wtRoot);
+    if (!entries) return;
+    this.dirsScanned++;
+    const wtTarget = this.targetMap.get('worktree');
+    const wtDepth = claudeDepth + 2;
+    const jobs = [];
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const full = path.join(wtRoot, e.name);
+      if (this.isExcluded(full, e.name)) continue;
+      if (wtTarget) {
+        this.found(full, wtTarget);
+        continue;
+      }
+      if (wtDepth < this.maxDepth) jobs.push(this.walk(full, wtDepth));
+    }
+    await Promise.all(jobs);
+  }
+
+  /** For a whole worktree: is it still a real worktree, and does it hold uncommitted work? */
+  async inspectWorktree(item) {
+    try {
+      const st = await fs.stat(path.join(item.path, '.git'));
+      if (!st.isFile()) {
+        item.note = 'not a git worktree';
+        return;
+      }
+    } catch {
+      item.note = 'not a git worktree';
+      return;
+    }
+    try {
+      const { stdout } = await git(['status', '--porcelain'], item.path);
+      if (stdout.trim()) item.note = 'uncommitted changes';
+    } catch {
+      item.note = 'git status failed';
+    }
   }
 
   /** node_modules itself is npkill's job; we only pick out the caches inside it. */
@@ -159,9 +217,13 @@ export class Scanner extends EventEmitter {
     };
     this.items.push(item);
     this.emit('found', item);
-    const p = this.measure(item).catch(() => {});
-    this.pending.add(p);
-    p.finally(() => this.pending.delete(p));
+    const track = (promise) => {
+      const p = promise.catch(() => {});
+      this.pending.add(p);
+      p.finally(() => this.pending.delete(p));
+    };
+    track(this.measure(item));
+    if (target.name === 'worktree') track(this.inspectWorktree(item));
   }
 
   /** du-style size (allocated blocks) + newest mtime inside the tree. */
@@ -233,11 +295,22 @@ export async function deleteItem(item, { dryRun = false, root } = {}) {
   if (p === fsRoot || p === HOME) throw new Error(`refusing to delete ${p}`);
   if (root && p === path.resolve(root)) throw new Error('refusing to delete the scan root');
   if (root && !p.startsWith(path.resolve(root) + path.sep)) throw new Error('path escapes scan root');
-  if (path.basename(p) !== item.name) throw new Error('path/name mismatch');
+  const isWorktree = item.target?.name === 'worktree';
+  if (!isWorktree && path.basename(p) !== item.name) throw new Error('path/name mismatch');
+  if (isWorktree && path.basename(path.dirname(path.dirname(p))) !== CLAUDE_DIR) {
+    throw new Error('not under .claude/worktrees');
+  }
 
   item.state = 'deleting';
   try {
-    if (!dryRun) await fs.rm(p, { recursive: true, force: true, maxRetries: 3 });
+    if (!dryRun) {
+      await fs.rm(p, { recursive: true, force: true, maxRetries: 3 });
+      if (isWorktree) {
+        // wt → worktrees → .claude → repo: drop git's now-stale bookkeeping for it
+        const repo = path.dirname(path.dirname(path.dirname(p)));
+        await git(['worktree', 'prune'], repo).catch(() => {});
+      }
+    }
     item.state = 'deleted';
   } catch (err) {
     item.state = 'error';
