@@ -1,0 +1,44 @@
+{
+  "name": "buildkill",
+  "version": "1.0.0",
+  "description": "Find and delete .next, .turbo, dist, build and other regenerable build caches. Like npkill, but for build artifacts.",
+  "type": "module",
+  "bin": {
+    "buildkill": "./bin/buildkill.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node bin/buildkill.js",
+    "test": "node --test",
+    "prepublishOnly": "npm test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "cleaner",
+    "disk",
+    "next",
+    "turbo",
+    "turborepo",
+    "dist",
+    "build",
+    "cache",
+    "npkill",
+    "cli"
+  ],
+  "license": "MIT",
+  "author": "Avilash Ghosh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Avilash2001/buildkill.git"
+  },
+  "homepage": "https://github.com/Avilash2001/buildkill#readme",
+  "bugs": {
+    "url": "https://github.com/Avilash2001/buildkill/issues"
+  }
+}
