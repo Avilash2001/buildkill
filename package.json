@@ -4,7 +4,7 @@
   "description": "Find and delete .next, .turbo, dist, build and other regenerable build caches. Like npkill, but for build artifacts.",
   "type": "module",
   "bin": {
-    "buildkill": "./bin/buildkill.js"
+    "buildkill": "bin/buildkill.js"
   },
   "files": [
     "bin",
