@@ -91,8 +91,8 @@ test('finds the right folders with default targets', async () => {
     const s = new Scanner({ root, targets: resolveTargets() });
     await s.run();
     const items = s.visibleItems();
-    assert.ok(s.items.some((i) => i.rel === 'web/.turbo'), 'empty folder is found…');
-    assert.ok(!items.some((i) => i.rel === 'web/.turbo'), '…but hidden from the view');
+    assert.ok(s.items.some((i) => fwd(i.rel) === 'web/.turbo'), 'empty folder is found…');
+    assert.ok(!items.some((i) => fwd(i.rel) === 'web/.turbo'), '…but hidden from the view');
     assert.deepEqual(rels(items), [
       'app/android/.gradle',
       'app/android/build',
@@ -109,7 +109,7 @@ test('finds the right folders with default targets', async () => {
       assert.ok(i.size > 0, `${i.rel} has size`);
       assert.ok(i.mtime > 0, `${i.rel} has mtime`);
     }
-    const next = items.find((i) => i.rel === 'web/.next');
+    const next = items.find((i) => fwd(i.rel) === 'web/.next');
     assert.ok(next.size >= 200_000, 'size counts nested files');
     assert.equal(next.files, 2);
   } finally {
@@ -173,7 +173,7 @@ test('deleteItem removes the folder and refuses dangerous paths', async () => {
   try {
     const s = new Scanner({ root, targets: resolveTargets() });
     const items = await s.run();
-    const next = items.find((i) => i.rel === 'web/.next');
+    const next = items.find((i) => fwd(i.rel) === 'web/.next');
 
     await deleteItem(next, { dryRun: true, root });
     assert.equal(next.state, 'deleted');
@@ -265,8 +265,8 @@ test('Claude Code worktrees: caches inside found by default; -W lists whole work
       'repo/.claude/worktrees/dirty',
       'repo/.claude/worktrees/orphan',
     ]);
-    assert.ok(!wt.some((i) => i.rel.includes('worktrees/') && i.name !== 'worktree'), 'nothing listed inside a whole worktree');
-    const byRel = Object.fromEntries(wt.map((i) => [i.rel, i]));
+    assert.ok(!wt.some((i) => fwd(i.rel).includes('worktrees/') && i.name !== 'worktree'), 'nothing listed inside a whole worktree');
+    const byRel = Object.fromEntries(wt.map((i) => [fwd(i.rel), i]));
     assert.equal(byRel['repo/.claude/worktrees/clean'].note, undefined);
     assert.equal(byRel['repo/.claude/worktrees/dirty'].note, 'uncommitted changes');
     assert.equal(byRel['repo/.claude/worktrees/orphan'].note, 'not a git worktree');
