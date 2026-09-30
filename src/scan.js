@@ -12,17 +12,52 @@ const execFileP = promisify(execFile);
 const git = (args, cwd) => execFileP('git', args, { cwd, timeout: 20_000, maxBuffer: 4 << 20 });
 
 const HOME = os.homedir();
+const IS_WIN = process.platform === 'win32';
 
 // Never descend into these, anywhere. Dependency folders are only ever
 // reported as a whole (with --all), never scanned for caches inside them.
 const NEVER_ENTER = new Set(['.git', '.hg', '.svn', 'venv', '.venv', 'Pods', 'vendor', 'bower_components']);
 // Skip these when they sit directly in the home directory (huge, never contain projects).
-const HOME_SKIP = new Set(['Library', 'Applications', 'Music', 'Movies', 'Pictures', 'Public']);
-// Skip these when scanning from the filesystem root.
+const HOME_SKIP = new Set([
+  'Library', 'Applications', 'Music', 'Movies', 'Pictures', 'Public', // macOS
+  'AppData', 'Application Data', 'Local Settings', // Windows
+]);
+// Skip these when scanning from the filesystem / drive root.
 const ROOT_SKIP = new Set([
   'System', 'Volumes', 'private', 'dev', 'proc', 'sys', 'cores', 'Library',
   'Applications', 'bin', 'sbin', 'usr', 'etc', 'var', 'opt', 'tmp', 'nix',
+  'Windows', 'Program Files', 'Program Files (x86)', 'ProgramData', '$Recycle.Bin',
+  'System Volume Information', 'Recovery', 'PerfLogs',
 ]);
+// Installed application bundles ship package.json + dist/ of their own. Never go inside.
+const APP_BUNDLE_EXTS = ['.app', '.framework', '.xcarchive', '.appx'];
+
+const samePath = (a, b) => (IS_WIN ? a.toLowerCase() === b.toLowerCase() : a === b);
+const fwd = (p) => (IS_WIN ? p.split(path.sep).join('/') : p);
+
+/**
+ * Is `p` strictly inside `root`? Works when root is a filesystem root ('/', 'C:\'),
+ * and case-insensitively on Windows. `pathImpl` is injectable for tests.
+ */
+export function isInsideRoot(root, p, pathImpl = path) {
+  const r = pathImpl.resolve(root);
+  const q = pathImpl.resolve(p);
+  const rel = pathImpl.relative(r, q);
+  return rel !== '' && !rel.startsWith('..') && !pathImpl.isAbsolute(rel);
+}
+
+/** An installed Electron / desktop app: <Name>.exe next to resources/, or an .asar payload. */
+function looksLikeInstalledApp(entries) {
+  let hasExe = false;
+  let hasResources = false;
+  for (const e of entries) {
+    const n = e.name.toLowerCase();
+    if (n === 'app.asar' || n === 'electron.asar') return true;
+    if (n.endsWith('.exe')) hasExe = true;
+    else if (n === 'resources' && e.isDirectory()) hasResources = true;
+  }
+  return hasExe && hasResources;
+}
 
 /** Simple concurrency limiter (keeps readdir storms under control). */
 function limiter(max) {
@@ -87,7 +122,11 @@ export class Scanner extends EventEmitter {
   }
 
   isExcluded(full, name) {
-    return this.exclude.some((x) => x === name || full.includes(x));
+    const f = fwd(full);
+    return this.exclude.some((x) => {
+      const xs = x.replace(/\\/g, '/');
+      return xs === name || f.includes(xs);
+    });
   }
 
   async readdir(dir) {
@@ -104,9 +143,10 @@ export class Scanner extends EventEmitter {
     this.dirsScanned++;
     this.emit('progress');
 
+    if (looksLikeInstalledApp(entries)) return; // an app's own files, not a project
     const isProject = looksLikeProject(entries);
-    const atHome = dir === HOME;
-    const atRoot = dir === path.parse(dir).root;
+    const atHome = samePath(dir, HOME);
+    const atRoot = samePath(dir, path.parse(dir).root);
     const subdirs = [];
     const side = [];
 
@@ -126,6 +166,7 @@ export class Scanner extends EventEmitter {
         continue;
       }
       if (NEVER_ENTER.has(name)) continue;
+      if (APP_BUNDLE_EXTS.some((ext) => name.endsWith(ext))) continue;
       if (name === CLAUDE_DIR) {
         side.push(this.walkClaudeWorktrees(full, depth + 1));
         continue;
@@ -292,9 +333,9 @@ export class Scanner extends EventEmitter {
 export async function deleteItem(item, { dryRun = false, root } = {}) {
   const p = path.resolve(item.path);
   const fsRoot = path.parse(p).root;
-  if (p === fsRoot || p === HOME) throw new Error(`refusing to delete ${p}`);
-  if (root && p === path.resolve(root)) throw new Error('refusing to delete the scan root');
-  if (root && !p.startsWith(path.resolve(root) + path.sep)) throw new Error('path escapes scan root');
+  if (samePath(p, fsRoot) || samePath(p, HOME)) throw new Error(`refusing to delete ${p}`);
+  if (root && samePath(p, path.resolve(root))) throw new Error('refusing to delete the scan root');
+  if (root && !isInsideRoot(root, p)) throw new Error('path escapes scan root');
   const isWorktree = item.target?.name === 'worktree';
   if (!isWorktree && path.basename(p) !== item.name) throw new Error('path/name mismatch');
   if (isWorktree && path.basename(path.dirname(path.dirname(p))) !== CLAUDE_DIR) {
@@ -304,7 +345,8 @@ export async function deleteItem(item, { dryRun = false, root } = {}) {
   item.state = 'deleting';
   try {
     if (!dryRun) {
-      await fs.rm(p, { recursive: true, force: true, maxRetries: 3 });
+      // Windows: files held by a dev server, editor or indexer make rm fail transiently
+      await fs.rm(p, { recursive: true, force: true, maxRetries: IS_WIN ? 10 : 3, retryDelay: 100 });
       if (isWorktree) {
         // wt → worktrees → .claude → repo: drop git's now-stale bookkeeping for it
         const repo = path.dirname(path.dirname(path.dirname(p)));
@@ -314,6 +356,9 @@ export async function deleteItem(item, { dryRun = false, root } = {}) {
     item.state = 'deleted';
   } catch (err) {
     item.state = 'error';
+    if (['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES'].includes(err.code)) {
+      err.message += ' (a file inside is in use or locked: stop dev servers / close editors, then retry)';
+    }
     item.error = err.message;
     throw err;
   }

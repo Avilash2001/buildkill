@@ -3,7 +3,13 @@ import { spawn } from 'node:child_process';
 import { c, clip, fmtAge, fmtSize, pad, tildify, truncate } from './format.js';
 import { deleteItem } from './scan.js';
 
-const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+// Legacy Windows consoles can't draw braille/arrows; Windows Terminal and VS Code can.
+const UNICODE =
+  process.platform !== 'win32' || !!process.env.WT_SESSION || process.env.TERM_PROGRAM === 'vscode';
+const G = UNICODE
+  ? { spin: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'], cursor: '❯', ok: '✓', warn: '⚠', arrows: '↑↓', enter: '⏎', dot: '·', party: ' 🎉' }
+  : { spin: ['|', '/', '-', '\\'], cursor: '>', ok: 'OK', warn: '!', arrows: 'up/down', enter: 'enter', dot: '-', party: '' };
+const SPIN = G.spin;
 const SORTS = ['size', 'age', 'path'];
 const HEADER_ROWS = 4;
 const FOOTER_ROWS = 2;
@@ -128,7 +134,7 @@ export function runTui({ scanner, root, sort = 'size', full = false, dryRun = fa
 
       const lines = [];
       const working = !scanner.done || st.busy > 0;
-      const spinner = working ? c.cyan(SPIN[st.spin % SPIN.length]) + ' ' : c.green('✓') + ' ';
+      const spinner = working ? c.cyan(SPIN[st.spin % SPIN.length]) + ' ' : c.green(G.ok) + ' ';
       const scanMsg = scanner.done
         ? `${scanner.dirsScanned.toLocaleString()} dirs scanned`
         : `scanning… ${scanner.dirsScanned.toLocaleString()} dirs`;
@@ -138,9 +144,9 @@ export function runTui({ scanner, root, sort = 'size', full = false, dryRun = fa
       lines.push(left + ' '.repeat(gap) + right);
 
       lines.push(
-        ` ${c.bold(String(view.length))} folders · ${c.bold(fmtSize(total))} total · ` +
+        ` ${c.bold(String(view.length))} folders ${G.dot} ${c.bold(fmtSize(total))} total ${G.dot} ` +
           (selCount ? c.yellow(`${selCount} selected (${fmtSize(selSize)})`) : c.dim('0 selected')) +
-          ` · ${c.green('freed ' + fmtSize(st.freed))}` +
+          ` ${G.dot} ${c.green('freed ' + fmtSize(st.freed))}` +
           (dryRun ? c.yellow('  [dry-run: nothing is actually deleted]') : ''),
       );
       lines.push('');
@@ -158,7 +164,7 @@ export function runTui({ scanner, root, sort = 'size', full = false, dryRun = fa
           if (i === st.offset && view.length === 0) {
             lines.push(
               scanner.done
-                ? c.green('   Nothing to clean here. 🎉')
+                ? c.green(`   Nothing to clean here.${G.party}`)
                 : c.dim('   Looking for build caches…'),
             );
           } else lines.push('');
@@ -169,7 +175,7 @@ export function runTui({ scanner, root, sort = 'size', full = false, dryRun = fa
         const note = it.note ? `  ${it.note}` : '';
         const pathStr = truncate(full ? tildify(it.path, home) : it.rel, Math.max(8, pathW - note.length));
         lines.push(
-          (isCur ? c.cyan(' ❯') : '  ') + ' ' +
+          (isCur ? c.cyan(` ${G.cursor}`) : '  ') + ' ' +
             (sel ? c.yellow('[x]') : c.dim('[ ]')) + ' ' +
             sizeColor(it) + ' ' +
             c.dim(pad(fmtAge(it.mtime), 4, true)) + '  ' +
@@ -186,12 +192,12 @@ export function runTui({ scanner, root, sort = 'size', full = false, dryRun = fa
         lines.push(
           c.yellow(` ${dryRun ? 'Pretend-delete' : 'Delete'} ${n} folder${n === 1 ? '' : 's'} (${fmtSize(sz)})? `) +
             c.bold('y') + c.dim('/N') +
-            (dirty ? c.red(`   ⚠ ${dirty} worktree${dirty === 1 ? '' : 's'} with uncommitted changes`) : ''),
+            (dirty ? c.red(`   ${G.warn} ${dirty} worktree${dirty === 1 ? '' : 's'} with uncommitted changes`) : ''),
         );
       } else {
         lines.push(
           c.dim(
-            ` ↑↓ move · space select · a all · d/⏎ delete · o open · s sort:${st.sort} · q quit`,
+            ` ${G.arrows} move ${G.dot} space select ${G.dot} a all ${G.dot} d/${G.enter} delete ${G.dot} o open ${G.dot} s sort:${st.sort} ${G.dot} q quit`,
           ),
         );
       }
@@ -304,6 +310,7 @@ export function runTui({ scanner, root, sort = 'size', full = false, dryRun = fa
         case '\n':
         case '\x1b[3~':
         case '\x7f':
+        case '\x08': // backspace on Windows
           askDelete();
           break;
         case 'o': {

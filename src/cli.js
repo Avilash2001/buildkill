@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { parseArgs } from 'node:util';
-import { c, fmtAge, fmtSize, pad, parseAge, parseSize, tildify } from './format.js';
+import { c, expandHome, fmtAge, fmtSize, pad, parseAge, parseSize, tildify } from './format.js';
 import { Scanner, deleteItem } from './scan.js';
 import { describeTargets, resolveTargets } from './targets.js';
 import { runTui } from './tui.js';
@@ -93,7 +93,7 @@ export async function main(argv) {
   if (values.targets) return void process.stdout.write(describeTargets() + '\n');
   if (positionals.length > 1) return fail(`expected at most one directory, got ${positionals.length}`);
 
-  const root = path.resolve(positionals[0] ?? process.cwd());
+  const root = path.resolve(expandHome(positionals[0] ?? process.cwd()));
   try {
     const st = await fs.stat(root);
     if (!st.isDirectory()) return fail(`${root} is not a directory`);
@@ -128,8 +128,16 @@ export async function main(argv) {
   const scanner = new Scanner({ root, targets, exclude, maxDepth, filter });
   const dryRun = !!values['dry-run'];
 
-  const interactive =
-    !values.list && !values.json && !values.yes && process.stdout.isTTY && process.stdin.isTTY;
+  const wantsInteractive = !values.list && !values.json && !values.yes;
+  const interactive = wantsInteractive && !!process.stdout.isTTY && !!process.stdin.isTTY;
+  if (wantsInteractive && !interactive) {
+    // Git Bash (mintty) and some IDE consoles give Node pipes, not a TTY.
+    const mintty = !!process.env.MSYSTEM || process.env.TERM_PROGRAM === 'mintty';
+    process.stderr.write(
+      c.yellow('Interactive mode needs a real terminal (stdin/stdout are not a TTY); printing the list instead.\n') +
+        (mintty ? c.dim('Git Bash: run  winpty buildkill …  or use Windows Terminal / PowerShell.\n') : ''),
+    );
+  }
 
   if (interactive) {
     const run = scanner.run().catch(() => {});

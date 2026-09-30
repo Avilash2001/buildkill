@@ -6,9 +6,9 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { Scanner, deleteItem } from '../src/scan.js';
+import { Scanner, deleteItem, isInsideRoot } from '../src/scan.js';
 import { resolveTargets } from '../src/targets.js';
-import { fmtSize, parseAge, parseSize, truncate } from '../src/format.js';
+import { expandHome, fmtSize, parseAge, parseSize, truncate } from '../src/format.js';
 
 const run = promisify(execFile);
 const BIN = fileURLToPath(new URL('../bin/buildkill.js', import.meta.url));
@@ -63,12 +63,26 @@ async function fixture() {
     // empty target folders are hidden from the list
     'web/.turbo': null,
   });
-  // symlinked dir must never be followed
-  await fs.symlink(path.join(root, 'web'), path.join(root, 'link-to-web'));
+  // installed apps ship package.json + dist of their own → never offered
+  await mk(root, {
+    'apps/Arduino IDE/Arduino IDE.exe': 'MZ',
+    'apps/Arduino IDE/resources/app/package.json': '{}',
+    'apps/Arduino IDE/resources/app/dist/main.js': 'compiled',
+    'apps/Arduino IDE/resources/app/plugins/vscode-builtin/package.json': '{}',
+    'apps/Arduino IDE/resources/app/plugins/vscode-builtin/dist/x.js': 'compiled',
+    'apps/Some.app/Contents/Resources/app/package.json': '{}',
+    'apps/Some.app/Contents/Resources/app/dist/x.js': 'compiled',
+    'apps/asar-app/app.asar': 'asar',
+    'apps/asar-app/package.json': '{}',
+    'apps/asar-app/dist/x.js': 'compiled',
+  });
+  // symlinked dir must never be followed (junction on Windows: no admin rights needed)
+  await fs.symlink(path.join(root, 'web'), path.join(root, 'link-to-web'), process.platform === 'win32' ? 'junction' : undefined);
   return root;
 }
 
-const rels = (items) => items.map((i) => i.rel).sort();
+const fwd = (p) => p.split(path.sep).join('/');
+const rels = (items) => items.map((i) => fwd(i.rel)).sort();
 const scan = async (opts) => { const s = new Scanner(opts); await s.run(); return s.visibleItems(); };
 
 test('finds the right folders with default targets', async () => {
@@ -189,13 +203,15 @@ test('CLI: --json, --list, --yes --dry-run, --yes', async () => {
     assert.equal(data.items[0].target, '.next', 'sorted by size desc');
     assert.ok(data.total > 0);
 
-    const { stdout: list } = await run(process.execPath, [BIN, root, '-l', '-t', '.turbo,dist']);
+    const { stdout: rawList } = await run(process.execPath, [BIN, root, '-l', '-t', '.turbo,dist']);
+    const list = fwd(rawList);
     assert.match(list, /mono\/\.turbo/);
     assert.match(list, /web\/dist/);
     assert.doesNotMatch(list, /\.next/);
     assert.match(list, /2 folders/);
 
-    const { stdout: nmList } = await run(process.execPath, [BIN, root, '-l', '-N', '-t', '.next']);
+    const { stdout: rawNm } = await run(process.execPath, [BIN, root, '-l', '-N', '-t', '.next']);
+    const nmList = fwd(rawNm);
     assert.match(nmList, /web\/node_modules/);
     assert.match(nmList, /web\/\.next/);
     assert.doesNotMatch(nmList, /node_modules\/\.cache/, 'caches inside node_modules fold into it');
@@ -272,9 +288,9 @@ test('Claude Code worktrees: caches inside found by default; -W lists whole work
 
     // CLI surfaces the note
     const { stdout } = await run(process.execPath, [BIN, root, '-l', '-W', '-t', 'worktree']);
-    assert.match(stdout, /worktrees\/dirty.*uncommitted changes/);
+    assert.match(fwd(stdout), /worktrees\/dirty.*uncommitted changes/);
     const { stdout: json } = await run(process.execPath, [BIN, root, '--json', '-W', '-t', 'worktree']);
-    assert.equal(JSON.parse(json).items.find((i) => i.path.endsWith('/dirty')).note, 'uncommitted changes');
+    assert.equal(JSON.parse(json).items.find((i) => fwd(i.path).endsWith('/dirty')).note, 'uncommitted changes');
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -284,6 +300,40 @@ test('CLI: bad arguments exit 1', async () => {
   await assert.rejects(run(process.execPath, [BIN, '--min-size', 'lots']), /invalid size/);
   await assert.rejects(run(process.execPath, [BIN, '--depth', '0']), /invalid depth/);
   await assert.rejects(run(process.execPath, [BIN, '/definitely/not/here']), /cannot access/);
+});
+
+test('installed apps are never entered, so their dist/ is never offered', async () => {
+  const root = await fixture();
+  try {
+    const items = await scan({ root, targets: resolveTargets() });
+    assert.ok(!rels(items).some((r) => r.startsWith('apps/')), `found inside an app: ${rels(items).filter((r) => r.startsWith('apps/'))}`);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('isInsideRoot: filesystem roots, drive letters, case, and escapes', () => {
+  const px = path.posix;
+  assert.equal(isInsideRoot('/', '/home/me/proj/.next', px), true, 'scanning "/" must allow deletes');
+  assert.equal(isInsideRoot('/home/me', '/home/me/proj/.next', px), true);
+  assert.equal(isInsideRoot('/home/me/', '/home/me/proj/.next', px), true, 'trailing slash on root');
+  assert.equal(isInsideRoot('/home/me', '/home/me', px), false, 'the root itself is not inside');
+  assert.equal(isInsideRoot('/home/me', '/home/other/.next', px), false);
+  assert.equal(isInsideRoot('/home/me', '/home/me2/.next', px), false, 'prefix trick');
+  const w = path.win32;
+  assert.equal(isInsideRoot('C:\\', 'C:\\CodeFiles\\Projects\\threads\\.next', w), true, 'the Windows bug from the screenshot');
+  assert.equal(isInsideRoot('c:\\codefiles', 'C:\\CodeFiles\\x\\.next', w), true, 'drive/case-insensitive');
+  assert.equal(isInsideRoot('C:\\CodeFiles', 'D:\\CodeFiles\\x\\.next', w), false, 'other drive');
+  assert.equal(isInsideRoot('C:\\CodeFiles', 'C:\\CodeFiles', w), false);
+});
+
+test('expandHome: ~ is expanded even when the shell passes it literally', () => {
+  const home = process.platform === 'win32' ? 'C:\\Users\\me' : '/home/me';
+  assert.equal(expandHome('~', home), home);
+  assert.equal(expandHome('~/Desktop', home), path.join(home, 'Desktop'));
+  assert.equal(expandHome('~\\Desktop', home), path.join(home, 'Desktop'));
+  assert.equal(expandHome('./x', home), './x');
+  assert.equal(expandHome('~user/x', home), '~user/x');
 });
 
 test('format helpers', () => {

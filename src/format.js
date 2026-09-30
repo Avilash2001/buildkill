@@ -1,4 +1,6 @@
 // Tiny ANSI + formatting helpers (zero dependencies).
+import os from 'node:os';
+import path from 'node:path';
 
 const colorEnabled =
   !!process.stdout.isTTY && !process.env.NO_COLOR && process.env.TERM !== 'dumb';
@@ -117,5 +119,12 @@ export function pad(str, width, right = false) {
 export function tildify(p, home) {
   if (!home) return p;
   if (p === home) return '~';
-  return p.startsWith(home + '/') ? '~' + p.slice(home.length) : p;
+  return p.startsWith(home + path.sep) ? '~' + p.slice(home.length) : p;
+}
+
+/** "~" and "~/x" → the home directory. Shells on Windows (PowerShell, cmd) pass "~" through literally. */
+export function expandHome(p, home = os.homedir()) {
+  if (p === '~') return home;
+  if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(home, p.slice(2));
+  return p;
 }

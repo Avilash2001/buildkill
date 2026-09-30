@@ -30,7 +30,7 @@ or run it once without installing:
 npx buildkill ~/Desktop
 ```
 
-Requires Node 18+.
+Requires Node 18+. macOS, Linux and Windows.
 
 ## Usage
 
@@ -104,6 +104,21 @@ Run `buildkill --targets` for the full list. In short:
 
 Sizes are allocated disk blocks (what `du` reports), not apparent file sizes.
 "AGE" is the newest file inside the folder, so a `.next` marked `5mo` really has not been built in five months.
+
+## Windows notes
+
+- Works in Windows Terminal, PowerShell and cmd. In **Git Bash** Node doesn't get a real
+  terminal, so the interactive screen can't start; run `winpty buildkill …` there, or use `-l`.
+- `~` is expanded by buildkill itself, so `buildkill ~/Desktop` works even though PowerShell
+  and cmd pass it through literally. Plain paths work too: `buildkill C:\Users\you\Desktop`.
+- Scanning a whole drive (`buildkill C:\`) works; `Windows`, `Program Files`, `ProgramData` and
+  `AppData` are skipped, and installed apps (anything with an `.exe` next to `resources\`, an
+  `.asar` payload, or a macOS `.app` bundle) are never entered even though they contain
+  `package.json` and `dist` folders of their own.
+- If a delete fails with "in use or locked", a dev server, editor or indexer still has a file
+  open inside that folder. Stop it and press `d` again.
+- If PowerShell refuses to run `npx` ("running scripts is disabled"), use `npx.cmd buildkill`
+  or allow local scripts once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
 ## Alternatives
 
